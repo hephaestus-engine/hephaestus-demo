@@ -21,7 +21,13 @@ A change there keeps every one of these:
 - **Checked before written.** An entry the log could not read back - a
   duration `parse_duration` refuses, a description with a line break - is
   refused before the file is touched.
-- **Same permissions.** The replaced log keeps the permissions it had.
+- **Same permissions.** The replaced log keeps the permissions it had; a new
+  log gets the permissions any new file would; a log the person may not
+  write is refused, not replaced.
+- **One writer at a time.** A write holds the lock on `.NAME.lock` beside
+  the log from reading it to replacing it, so two writes at once both land.
+- **Where the link points.** A log reached through a symbolic link is
+  written at its target, and the link stays a link.
 
 `tests/test_store.py` holds each of these; a change that alters one changes
 its test in the same change, and says why in the report.

@@ -36,9 +36,11 @@ durasum add LOG DURATION DESCRIPTION   add an entry to the end of the log
 ```
 
 `total` prints the total as `1h 30m`, or as a number of seconds with
-`--seconds`. `add` creates the log if it is missing. Input that cannot be read
-exits with status 2 and one line on standard error naming the input, and for
-a log, the line.
+`--seconds`. `add` creates the log if it is missing, and takes everything
+after LOG as the entry, so a correction is written as it is:
+`durasum add week.log -15m correction`. Input that cannot be read exits with
+status 2 and one line on standard error naming the input, and for a log, the
+line.
 
 ## Log format
 
@@ -52,7 +54,9 @@ is recorded as a negative entry, such as `-15m`, and subtracts from the total.
 
 `durasum add` never rewrites a log in place: it writes the new content beside
 the log and replaces it in one step, keeping every existing line byte for
-byte.
+byte. Two adds at once take turns on an empty lock file it keeps beside the
+log, `.NAME.lock`, so both entries land. A log reached through a symbolic link
+is written where the link points, and a read-only log is refused.
 
 ## Development
 

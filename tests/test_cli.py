@@ -29,6 +29,30 @@ def test_add_then_total(tmp_path, capsys):
     assert capsys.readouterr().out == "25m\n"
 
 
+def test_add_takes_a_correction_as_written(tmp_path, capsys):
+    log = tmp_path / "work.log"
+    log.write_text("1h  planning\n", encoding="utf-8")
+
+    assert main(["add", str(log), "-15m", "correction:", "planning", "ran", "short"]) == 0
+    assert main(["add", str(log), "--", "-5m", "correction"]) == 0
+    assert main(["total", str(log), "--seconds"]) == 0
+
+    assert log.read_text(encoding="utf-8").splitlines()[1:] == [
+        "-15m  correction: planning ran short",
+        "-5m  correction",
+    ]
+    assert capsys.readouterr().out == "2400\n"
+
+
+def test_add_without_a_description_exits_2(tmp_path, capsys):
+    log = tmp_path / "work.log"
+
+    assert main(["add", str(log), "20m"]) == 2
+
+    assert not log.exists()
+    assert "a duration and a description" in capsys.readouterr().err
+
+
 def test_an_unreadable_log_exits_2_and_says_where(tmp_path, capsys):
     log = tmp_path / "work.log"
     log.write_text("30m  review\nsoon  later\n", encoding="utf-8")

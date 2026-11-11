@@ -1,9 +1,16 @@
+import multiprocessing
+import os
 import stat
 import sys
 
 import pytest
 
 from durasum.store import append_entry
+
+
+def _beside(directory):
+    """The names in a log's directory, sorted."""
+    return sorted(p.name for p in directory.iterdir())
 
 
 def test_an_entry_is_added_to_the_end(tmp_path):
@@ -63,7 +70,7 @@ def test_no_temporary_file_is_left_behind(tmp_path):
     append_entry(log, "20m", "stand-up")
     append_entry(log, "10m", "notes")
 
-    assert [p.name for p in tmp_path.iterdir()] == ["work.log"]
+    assert _beside(tmp_path) == [".work.log.lock", "work.log"]
 
 
 def test_a_failed_write_leaves_the_old_log_whole(tmp_path, monkeypatch):
@@ -79,7 +86,7 @@ def test_a_failed_write_leaves_the_old_log_whole(tmp_path, monkeypatch):
         append_entry(log, "20m", "stand-up")
 
     assert log.read_bytes() == b"45m  review\n"
-    assert [p.name for p in tmp_path.iterdir()] == ["work.log"]
+    assert _beside(tmp_path) == [".work.log.lock", "work.log"]
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX permissions")
@@ -89,5 +96,59 @@ def test_the_log_keeps_its_permissions(tmp_path):
     log.chmod(0o640)
 
     append_entry(log, "20m", "stand-up")
+
+    assert stat.S_IMODE(log.stat().st_mode) == 0o640
+
+
+def test_adds_at_the_same_time_keep_every_entry(tmp_path):
+    log = tmp_path / "work.log"
+    entries = [(log, "1m", f"entry {n}") for n in range(40)]
+
+    with multiprocessing.get_context("spawn").Pool(8) as pool:
+        pool.starmap(append_entry, entries)
+
+    lines = log.read_text(encoding="utf-8").splitlines()
+    assert sorted(lines) == sorted(f"1m  entry {n}" for n in range(40))
+
+
+def test_a_log_reached_through_a_link_is_written_where_it_points(tmp_path):
+    real = tmp_path / "synced" / "work.log"
+    real.parent.mkdir()
+    real.write_bytes(b"45m  review\n")
+    link = tmp_path / "work.log"
+    try:
+        link.symlink_to(real)
+    except OSError:
+        pytest.skip("this account may not create symbolic links")
+
+    append_entry(link, "20m", "stand-up")
+
+    assert link.is_symlink()
+    assert real.read_bytes() == b"45m  review\n20m  stand-up\n"
+    assert _beside(real.parent) == [".work.log.lock", "work.log"]
+
+
+@pytest.mark.skipif(getattr(os, "geteuid", lambda: 1)() == 0, reason="root may write any file")
+def test_a_read_only_log_is_refused_and_left_whole(tmp_path):
+    log = tmp_path / "work.log"
+    log.write_bytes(b"45m  review\n")
+    log.chmod(stat.S_IREAD)
+
+    with pytest.raises(PermissionError, match="read-only"):
+        append_entry(log, "20m", "stand-up")
+
+    log.chmod(stat.S_IREAD | stat.S_IWRITE)
+    assert log.read_bytes() == b"45m  review\n"
+    assert _beside(tmp_path) == [".work.log.lock", "work.log"]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX permissions")
+def test_a_new_log_gets_the_permissions_of_any_new_file(tmp_path):
+    log = tmp_path / "work.log"
+    previous = os.umask(0o027)
+    try:
+        append_entry(log, "20m", "stand-up")
+    finally:
+        os.umask(previous)
 
     assert stat.S_IMODE(log.stat().st_mode) == 0o640
