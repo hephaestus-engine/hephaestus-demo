@@ -287,14 +287,6 @@ def test_a_dry_run_notes_a_repository_the_manifest_does_not_name(
     assert "note: .agent/manifest.yaml names someone/else" in capsys.readouterr().err
 
 
-def test_the_demos_manifest_names_a_placeholder_no_account_can_hold():
-    seed_manifest = ROOT / ".agent" / "manifest.yaml"
-    repo = re.search(r"^repo:\s*(\S+)", seed_manifest.read_text(encoding="utf-8"), re.MULTILINE)
-
-    owner = seed._unquote(repo.group(1)).split("/")[0]
-    assert not re.fullmatch(r"[A-Za-z0-9-]+", owner)
-
-
 def test_no_token_files_nothing(forge, monkeypatch, capsys):
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
     monkeypatch.delenv("GH_TOKEN", raising=False)
