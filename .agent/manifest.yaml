@@ -1,0 +1,61 @@
+# The rules pack of the durasum demo: everything the engine does in this
+# repository is read from here and from the files beside it. Every key, with
+# its default, is in the engine's docs/ARCHITECTURE.md section 18; check what
+# the engine reads from this pack with `agentctl check <this repository>`.
+#
+# The demo is held to what a real project would use: two gates and a lint
+# check on every change, a model floor on the module that writes a person's
+# data, the pack and the CI files out of every run's reach, and every change
+# landed as a pull request a person merges.
+schema_version: 1
+
+# The repository the tracker reaches. A placeholder until the demo has its
+# home: a copy of the demo names its own repository here (README, "Resetting
+# a demo").
+repo: demo-owner/durasum-demo
+default_branch: main
+
+# Dependency installs, run in every fresh worktree before the gates; a failure
+# here is an infrastructure fault, not the run's. The tests import the package
+# from the worktree's src/ (pyproject.toml), so the install brings the tools.
+setup:
+  - {name: deps, run: "python -m pip install -e \".[dev]\""}
+
+# The definition of done: every gate passes before a change can land.
+validate:
+  - {name: tests, run: "python -m pytest -q", timeout_s: 300}
+  - {name: lint, run: "python -m ruff check .", timeout_s: 120}
+  - {name: format, run: "python -m ruff format --check .", timeout_s: 120}
+
+capabilities:
+  log_file:
+    paths: ["src/durasum/store.py", "tests/test_store.py"]
+    min_model: opus
+    reason: "store.py is the only code that writes a person's log file, and the log is their only copy: a write that truncates or reorders it loses entries nothing can bring back. Its tests are the guard on that, so they carry the same floor."
+
+# Paths no run may write: the pack itself, both forges' CI files, environment
+# files, and the demo's own material - the issue files a demo files and the
+# recordings of its runs.
+protected_paths:
+  - ".agent/**"
+  - ".github/**"
+  - ".gitlab-ci.yml"
+  - ".env*"
+  - "demo/**"
+  - "docs/demos/**"
+
+dispatch:
+  # Nothing is dispatched until a person releases an issue.
+  mode: manual
+  # Every change lands as a pull request a person merges.
+  land: pr
+  # A person merges each demo's pull request; nothing asks the engine to.
+  land_pr_label: null
+
+limits:
+  max_output_tokens_per_window: null
+  budget_window_h: 5
+
+known_gaps:
+  - id: placeholder-repo
+    detail: "`repo` names a placeholder until the demo has its home. A copy of the demo sets it to the copy's own repository before the engine is pointed at it."
