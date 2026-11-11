@@ -15,7 +15,7 @@ schema_version: 1
 # else's repository. A copy of the demo names its own repository here before
 # anything else (README, "Resetting a demo"); scripts/seed.py refuses to file
 # issues on any other.
-repo: "<owner>/durasum-demo"
+repo: "hephaestus-engine/hephaestus-demo"
 default_branch: main
 
 # The review rules are the reviewer's: every review prompt points at this
