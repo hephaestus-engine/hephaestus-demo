@@ -14,10 +14,13 @@ added up by hand.
 - `read_entries` (`src/durasum/log.py:29`) splits each line into its duration
   and its description (line 41); `Entry` keeps the description as one string
   and reads no tags.
-- `durasum total` (`src/durasum/cli.py:33`) prints one total, as text or, with
+- `durasum total` (`src/durasum/cli.py:46`) prints one total, as text or, with
   `--seconds` (line 24), as a number of seconds.
 
 ## The change
+
+The change is in `src/durasum/log.py`, `src/durasum/cli.py`,
+`tests/test_log.py`, `tests/test_cli.py` and `README.md`:
 
 1. A tag is a word in an entry's description that starts with `+` followed
    by one or more letters, digits, `-` or `_`: `+docs`, `+release-2`. `Entry`
@@ -58,9 +61,17 @@ added up by hand.
       corrections included.
 - [ ] The gates pass: tests, lint and format.
 
+## Tests expected
+
+Each case above as its own test, failing before the change: the tags read
+from a description, `+` alone and inside a word, the exact `--by-tag` output
+above, a correction counted against its tags, and `durasum total` without
+`--by-tag` unchanged. Sabotage: count an entry with two tags twice towards
+`total`, and a test fails.
+
 ## What not to touch
 
-- `src/durasum/parse.py` and `src/durasum/store.py`.
+- How a duration is read and how a log is written (parse.py and store.py).
 - The log format: a log that reads today reads the same, tags or not.
 
 ## Dependencies

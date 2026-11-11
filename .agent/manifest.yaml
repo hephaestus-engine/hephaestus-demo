@@ -10,10 +10,20 @@
 schema_version: 1
 
 # The repository the tracker reaches. A placeholder until the demo has its
-# home: a copy of the demo names its own repository here (README, "Resetting
-# a demo").
-repo: demo-owner/durasum-demo
+# home, written so that no forge account can hold it: an engine pointed at an
+# unedited copy fails on its first tracker call rather than reaching someone
+# else's repository. A copy of the demo names its own repository here before
+# anything else (README, "Resetting a demo"); scripts/seed.py refuses to file
+# issues on any other.
+repo: "<owner>/durasum-demo"
 default_branch: main
+
+# The review rules are the reviewer's: every review prompt points at this
+# file, and only the files under rules/ are handed to every run, the build
+# included. The builder works from the issue and the working rules, as a
+# contributor works from an issue and the contributing guide.
+pack:
+  review_rules: review/rules.md
 
 # Dependency installs, run in every fresh worktree before the gates; a failure
 # here is an infrastructure fault, not the run's. The tests import the package
@@ -58,4 +68,4 @@ limits:
 
 known_gaps:
   - id: placeholder-repo
-    detail: "`repo` names a placeholder until the demo has its home. A copy of the demo sets it to the copy's own repository before the engine is pointed at it."
+    detail: "`repo` names a placeholder no forge account can hold until the demo has its home. A copy of the demo sets it to the copy's own repository before it files the issues or points the engine at it; scripts/seed.py refuses while the two differ."

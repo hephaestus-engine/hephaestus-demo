@@ -6,7 +6,7 @@ Each issue is a Markdown file, `demo/issues/NN-slug.md` by default, whose
 front matter gives its title and labels and whose rest is the issue's body:
 
     ---
-    title: A total of an hour or more prints its minutes twice
+    title: A total of an hour or more prints the hour again in its minutes, as 1h 90m
     labels: [bug]
     ---
     ## Problem / why
@@ -15,10 +15,15 @@ front matter gives its title and labels and whose rest is the issue's body:
 The token comes from the environment (GITHUB_TOKEN, else GH_TOKEN) and is
 sent only to the forge named. `--base-url` is the forge's API address: the
 default is github.com's; a GitHub Enterprise Server is `https://HOST/api/v3`.
-An issue whose title the repository already has, open or closed, is skipped,
-so a second run files nothing twice. Labels missing from the repository are
-created first, and an issue the forge filed without every label asked for is
-an error: the forge drops labels silently for a token without push access.
+Nothing is filed on a repository other than the one `.agent/manifest.yaml`
+names, since the engine works on that one.
+
+An issue whose title the repository already has, open or closed, is not
+filed again, so a second run files nothing twice; the labels it lacks are
+added to it. Labels missing from the repository are created first, and an
+issue the forge left without a label asked for is an error: the forge drops
+labels silently for a token without push access. Label names are compared
+without regard to case, as the forge compares them.
 
 Standard library only, so it runs before anything is installed. `--forge` is
 an argument from the start: another forge is a new backend beside GitHub's.
@@ -38,6 +43,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+MANIFEST = ROOT / ".agent" / "manifest.yaml"
 ISSUES = ROOT / "demo" / "issues"
 ISSUE_FILES = "[0-9][0-9]-*.md"
 TOKEN_VARIABLES = ("GITHUB_TOKEN", "GH_TOKEN")
@@ -119,17 +125,23 @@ class GitHub:
         )
         with urllib.request.urlopen(request, timeout=30) as response:
             text = response.read().decode("utf-8")
-        return json.loads(text) if text else None
+        try:
+            return json.loads(text) if text else None
+        except json.JSONDecodeError:
+            raise SeedError(f"the forge's answer to {method} {path} is not JSON") from None
 
-    def existing_titles(self) -> set[str]:
-        """Every issue title the repository has, open or closed."""
-        titles: set[str] = set()
+    def existing_issues(self) -> dict[str, dict]:
+        """Every issue the repository has, open or closed, by title; pull
+        requests, which the forge lists among the issues, are left out."""
+        issues: dict[str, dict] = {}
         page = 1
         while True:
             batch = self._call("GET", f"/issues?state=all&per_page=100&page={page}")
-            titles.update(item["title"] for item in batch if "pull_request" not in item)
+            for item in batch:
+                if "pull_request" not in item:
+                    issues.setdefault(item["title"], item)
             if len(batch) < 100:
-                return titles
+                return issues
             page += 1
 
     def ensure_label(self, name: str) -> bool:
@@ -150,13 +162,33 @@ class GitHub:
             "/issues",
             {"title": issue.title, "body": issue.body, "labels": list(issue.labels)},
         )
-        dropped = set(issue.labels) - {label["name"] for label in created.get("labels", [])}
-        if dropped:
-            raise SeedError(
-                f"#{created['number']} was filed without {', '.join(sorted(dropped))}: "
-                "the token cannot set labels on this repository"
-            )
+        _require_labels(issue, created.get("labels", []), f"#{created['number']} was filed")
         return created["number"], created["html_url"]
+
+    def label_issue(self, issue: Issue, existing: dict) -> bool:
+        """Add to an issue filed earlier the labels it lacks; True when it lacked any."""
+        missing = _missing(issue.labels, existing.get("labels", []))
+        if not missing:
+            return False
+        number = existing["number"]
+        labels = self._call("POST", f"/issues/{number}/labels", {"labels": missing})
+        _require_labels(issue, labels, f"#{number} is still")
+        return True
+
+
+def _missing(wanted: tuple[str, ...], labels: list[dict]) -> list[str]:
+    """The wanted label names not among the labels the forge returned."""
+    have = {label["name"].casefold() for label in labels}
+    return [name for name in wanted if name.casefold() not in have]
+
+
+def _require_labels(issue: Issue, labels: list[dict], what: str) -> None:
+    dropped = _missing(issue.labels, labels)
+    if dropped:
+        raise SeedError(
+            f"{what} without {', '.join(sorted(dropped))}: "
+            "the token cannot set labels on this repository"
+        )
 
 
 FORGES = {"github": GitHub}
@@ -173,11 +205,10 @@ def _arguments(argv: list[str] | None) -> argparse.Namespace:
 
 
 def _manifest_repo() -> str | None:
-    manifest = ROOT / ".agent" / "manifest.yaml"
-    if not manifest.is_file():
+    if not MANIFEST.is_file():
         return None
-    match = re.search(r"^repo:\s*(\S+)", manifest.read_text(encoding="utf-8"), re.MULTILINE)
-    return match.group(1) if match else None
+    match = re.search(r"^repo:\s*(\S+)", MANIFEST.read_text(encoding="utf-8"), re.MULTILINE)
+    return _unquote(match.group(1)) if match else None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -189,11 +220,14 @@ def main(argv: list[str] | None = None) -> int:
         issues = [parse_issue(path) for path in files]
         manifest_repo = _manifest_repo()
         if manifest_repo is not None and manifest_repo != args.repo:
-            print(
-                f"note: .agent/manifest.yaml names {manifest_repo}, not {args.repo}; "
-                "the engine works on the repository its manifest names",
-                file=sys.stderr,
+            mismatch = (
+                f".agent/manifest.yaml names {manifest_repo}, not {args.repo}, and the engine "
+                f"works on the repository its manifest names: set `repo: {args.repo}` there "
+                "and commit it first (README, 'Resetting a demo')"
             )
+            if not args.dry_run:
+                raise SeedError(mismatch)
+            print(f"note: {mismatch}", file=sys.stderr)
         if args.dry_run:
             for issue in issues:
                 labels = ", ".join(issue.labels) or "no labels"
@@ -203,16 +237,19 @@ def main(argv: list[str] | None = None) -> int:
         if not token:
             raise SeedError(f"no token: set {' or '.join(TOKEN_VARIABLES)}")
         forge = FORGES[args.forge](args.repo, token, args.base_url)
-        existing = forge.existing_titles()
+        existing = forge.existing_issues()
         for name in sorted({label for issue in issues for label in issue.labels}):
             if forge.ensure_label(name):
                 print(f"created label  {name}")
         for issue in issues:
-            if issue.title in existing:
+            found = existing.get(issue.title)
+            if found is None:
+                number, url = forge.file_issue(issue)
+                print(f"filed #{number}  {issue.title}  {url}")
+            elif forge.label_issue(issue, found):
+                print(f"labelled #{found['number']}  {issue.title}")
+            else:
                 print(f"exists     {issue.title}")
-                continue
-            number, url = forge.file_issue(issue)
-            print(f"filed #{number}  {issue.title}  {url}")
     except SeedError as exc:
         print(f"seed: {exc}", file=sys.stderr)
         return 1
@@ -223,6 +260,9 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     except urllib.error.URLError as exc:
         print(f"seed: the forge could not be reached: {exc.reason}", file=sys.stderr)
+        return 1
+    except TimeoutError:
+        print("seed: the forge did not answer in time", file=sys.stderr)
         return 1
     return 0
 

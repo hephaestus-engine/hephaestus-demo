@@ -18,11 +18,13 @@ under an hour print correctly, which is why nothing caught it.
   whole duration, instead of from `rest`.
 - `test_hours_and_minutes` (`tests/test_fmt.py:40`) states the right output
   for four durations and fails today. It is marked `xfail` (line 30) so the
-  suite stays green until this issue is done; `xfail_strict` in
-  `pyproject.toml` fails the suite if the test passes with the marker still
-  on.
+  suite stays green until this issue is done; `xfail_strict` in the
+  project's pyproject.toml fails the suite if the test passes with the
+  marker still on.
 
 ## The change
+
+The change is in `src/durasum/fmt.py` and `tests/test_fmt.py`:
 
 1. Take the minutes and seconds from what is left after the hours.
 2. Remove the `xfail` marker from `test_hours_and_minutes`, and the comment
@@ -44,8 +46,8 @@ and passes after it. Sabotage: put line 14 back as it was and the test fails.
 
 ## What not to touch
 
-- `src/durasum/parse.py`, `src/durasum/log.py`, `src/durasum/store.py` and the
-  command: the defect is in formatting only.
+- How a duration is read, how a log is read or written, and the command
+  (parse.py, log.py, store.py and cli.py): the defect is in formatting only.
 - The other tests.
 
 ## Dependencies

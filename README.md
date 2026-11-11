@@ -68,16 +68,18 @@ $ python -m ruff format --check .
 ```
 
 These three checks are the engine's gates for this repository and the CI's
-jobs on both forges. The suite reports one test as **expected to fail**
-(`XFAIL`): it is the planted defect of the first demo, below.
+jobs on both forges. The suite reports one test, in four cases, as **expected
+to fail** (`4 xfailed`): it is the planted defect of the first demo, below.
+The install needs the package index, so an engine that runs the gates needs
+a way out to it or to a mirror.
 
 ## What the demo holds
 
 | Path | What it is |
 |---|---|
-| `.agent/` | The rules pack the engine reads: the manifest, the working rules, the scoring rubric, the review rules, the report template and one module. |
+| `.agent/` | The rules pack the engine reads: the manifest; the working rules and the scoring rubric (`rules/`, handed to every run); the review rules (`review/rules.md`, the reviewer's); the report template; and one module. |
 | `demo/issues/NN-slug.md` | The demo issues, as files: a title and labels in front matter, a body written to the engine's issue standard. |
-| `demo/issues/later/` | An issue kept for a later demo; not filed by default. |
+| `demo/issues/later/` | An issue kept for a possible later demo; not filed by default, and no recording of it is planned. |
 | `scripts/seed.py` | Files the demo issues on a forge. Standard library only. |
 | `docs/demos/` | How each demo is recorded, and the recordings. |
 
@@ -90,9 +92,12 @@ The pack holds the demo to what a real project would use:
 - **Protected paths:** no run may write the pack, either forge's CI files,
   environment files, the demo issues or the recordings (`.agent/**`,
   `.github/**`, `.gitlab-ci.yml`, `.env*`, `demo/**`, `docs/demos/**`).
-- **Landing:** manual dispatch (a person releases each issue), and every
-  change lands as a pull request a person merges (`dispatch.land: pr`,
-  `dispatch.land_pr_label: null`).
+- **Review rules for the reviewer:** the rules a reviewer refuses on are in
+  `.agent/review/rules.md` (`pack.review_rules`). Every review prompt points
+  at them; the build is handed the working rules and the issue, not them.
+- **Landing:** manual dispatch (a person releases each issue by adding the
+  `agent:go` label), and every change lands as a pull request a person merges
+  (`dispatch.land: pr`, `dispatch.land_pr_label: null`).
 
 The demos:
 
@@ -103,10 +108,12 @@ The demos:
    the marker, and `xfail_strict` fails the suite if a fix forgets to.
 2. **Review says no** (`demo/issues/02-read-clock-time-durations.md`). A
    small feature, reading `1:30` as a duration. The issue is complete as an
-   issue, but it does not repeat one of the pack's own review rules, and a
-   first attempt that follows the issue alone is likely to be refused on
-   it. The retry is reviewed on what it fixed.
-3. **A moderate feature**, later (`demo/issues/later/03-total-a-log-per-tag.md`).
+   issue, but it does not repeat one of the pack's review rules, which the
+   build is not handed, and a first attempt that follows the issue alone is
+   likely to be refused on it. The retry is reviewed on what it fixed.
+
+A third issue, a moderate feature (`demo/issues/later/03-total-a-log-per-tag.md`),
+is kept for a possible later demo. It is not in the current set.
 
 What each demo shows, and how it is recorded, is in
 [docs/demos/README.md](docs/demos/README.md).
@@ -117,26 +124,38 @@ A demo runs on a fresh copy of this repository, never on one an earlier run
 has changed. Nothing force-pushes: a reset is a new repository.
 
 1. Create an empty repository on the forge: no README, no licence, no issues.
-2. Push the demo's starting point to it, as its default branch and as the tag:
+2. Start from the demo's starting point, and name the new repository in the
+   manifest. The engine works on the repository its manifest names, and
+   `repo` in `.agent/manifest.yaml` is a placeholder no forge account can
+   hold, so a copy that skips this step fails on its first tracker call
+   instead of reaching someone else's repository:
 
    ```console
    $ git clone <this repository> durasum-demo && cd durasum-demo
-   $ git push <new repository URL> "demo-start^{commit}:refs/heads/main" demo-start
+   $ git switch --detach demo-start
    ```
 
-3. If the new repository is not the one `.agent/manifest.yaml` names in
-   `repo`, commit that one line on the new repository's `main`, naming it.
-   The engine works on the repository its manifest names.
-4. File the demo issues, with a token that may create issues and labels there
-   in `GITHUB_TOKEN` (or `GH_TOKEN`):
+   Set `repo: OWNER/NAME` in `.agent/manifest.yaml`, then push, as the new
+   repository's default branch, the starting point with that one line, and
+   the tag that marks the starting point:
+
+   ```console
+   $ git commit -am "The manifest names this copy's repository"
+   $ git push <new repository URL> HEAD:refs/heads/main demo-start
+   ```
+
+3. From the same checkout, file the demo issues, with a token that may create
+   issues and labels there in `GITHUB_TOKEN` (or `GH_TOKEN`):
 
    ```console
    $ python scripts/seed.py --forge github --repo OWNER/NAME --dry-run
    $ python scripts/seed.py --forge github --repo OWNER/NAME
    ```
 
-   A GitHub Enterprise Server adds `--base-url https://HOST/api/v3`. An issue
-   whose title the repository already has is skipped, so running it twice
-   files nothing twice.
-5. Point the engine at a clone of the new repository, run
-   `agentctl check <clone>`, and release one demo issue for a run.
+   A GitHub Enterprise Server adds `--base-url https://HOST/api/v3`. The
+   script refuses a repository the manifest does not name. An issue whose
+   title the repository already has is not filed again, so running it twice
+   files nothing twice; the labels it lacks are added.
+4. Point the engine at a clone of the new repository, run
+   `agentctl check <clone>`, and release one demo issue for a run by adding
+   the `agent:go` label to it.

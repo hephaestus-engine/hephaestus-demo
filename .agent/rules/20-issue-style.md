@@ -5,9 +5,11 @@ Triage scores every issue on four axes, each a whole number from 1 (low) to
 project's own.
 
 - **C - complexity:** how hard the change is.
-  1: one function, an obvious edit (a wrong variable in `fmt.py`).
-  2: one module and its tests (a new input form in `parse.py`).
-  3: two modules and the command (a new kind of report).
+  1: an obvious edit inside one function, with its test.
+  2: one module and its tests, such as a new rule in how a module reads or
+  writes text.
+  3: two modules and the command, such as a new option that reads the log
+  differently.
   4: a change to the log format that every module reads.
   5: a redesign of how the log is stored.
 - **V - value:** the benefit if it lands right. Orders the queue only; it

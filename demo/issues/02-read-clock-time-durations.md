@@ -16,13 +16,16 @@ before it can be totalled.
   raises `ValueError` naming the input for anything else.
 - `read_entries` (`src/durasum/log.py:29`) reads the first word of each log
   line with `parse_duration` (line 43), and `append_entry`
-  (`src/durasum/store.py:18`) checks a new entry's duration with it, so the
+  (`src/durasum/store.py:36`) checks a new entry's duration with it, so the
   log, `durasum total` and `durasum add` all take whatever it reads.
 - `tests/test_parse.py:36` lists `1:30` among the inputs
   `test_anything_else_is_refused_and_named` (line 38) refuses today.
 - The README's "Log format" section lists the forms a duration may take.
 
 ## The change
+
+The change is in `src/durasum/parse.py`, `tests/test_parse.py`,
+`tests/test_cli.py` and `README.md`:
 
 1. `parse_duration` also reads the clock form `H:MM`: one or more digits of
    hours, a colon, then exactly two digits of minutes from `00` to `59`.
@@ -54,8 +57,8 @@ make the clock form accept `1:75`, and a test fails.
 ## What not to touch
 
 - The unit form: every input it reads today reads the same afterwards.
-- `src/durasum/fmt.py`: totals are still printed in the unit form.
-- `src/durasum/store.py`.
+- How a total is printed (fmt.py): totals are still printed in the unit form.
+- How a log is written (store.py).
 
 ## Dependencies
 
