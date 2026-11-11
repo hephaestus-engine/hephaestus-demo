@@ -3,10 +3,10 @@
 # its default, is in the engine's docs/ARCHITECTURE.md section 18; check what
 # the engine reads from this pack with `agentctl check <this repository>`.
 #
-# The demo is held to what a real project would use: two gates and a lint
-# check on every change, a model floor on the module that writes a person's
-# data, the pack and the CI files out of every run's reach, and every change
-# landed as a pull request a person merges.
+# The demo is held to what a real project would use: the tests, the lint
+# check and the format check on every change, a model floor on the module
+# that writes a person's data, the pack and the CI files out of every run's
+# reach, and every change landed as a pull request a person merges.
 schema_version: 1
 
 # The repository the tracker reaches. A placeholder until the demo has its

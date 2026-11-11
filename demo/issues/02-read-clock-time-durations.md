@@ -18,7 +18,8 @@ before it can be totalled.
   line with `parse_duration` (line 43), and `append_entry`
   (`src/durasum/store.py:18`) checks a new entry's duration with it, so the
   log, `durasum total` and `durasum add` all take whatever it reads.
-- `tests/test_parse.py:38` lists `1:30` among the inputs refused today.
+- `tests/test_parse.py:36` lists `1:30` among the inputs
+  `test_anything_else_is_refused_and_named` (line 38) refuses today.
 - The README's "Log format" section lists the forms a duration may take.
 
 ## The change
