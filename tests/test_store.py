@@ -89,6 +89,30 @@ def test_a_failed_write_leaves_the_old_log_whole(tmp_path, monkeypatch):
     assert _beside(tmp_path) == [".work.log.lock", "work.log"]
 
 
+def test_a_replace_another_program_holds_up_is_retried_on_windows(tmp_path, monkeypatch):
+    log = tmp_path / "work.log"
+    log.write_bytes(b"45m  review\n")
+    replace = os.replace
+    refused = []
+
+    def held_open(source, target):
+        if len(refused) < 2:
+            refused.append(target)
+            raise PermissionError(13, "Access is denied")
+        replace(source, target)
+
+    monkeypatch.setattr("durasum.store.os.replace", held_open)
+
+    if sys.platform == "win32":
+        append_entry(log, "20m", "stand-up")
+        assert log.read_bytes() == b"45m  review\n20m  stand-up\n"
+    else:
+        with pytest.raises(PermissionError):
+            append_entry(log, "20m", "stand-up")
+        assert log.read_bytes() == b"45m  review\n"
+    assert _beside(tmp_path) == [".work.log.lock", "work.log"]
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX permissions")
 def test_the_log_keeps_its_permissions(tmp_path):
     log = tmp_path / "work.log"

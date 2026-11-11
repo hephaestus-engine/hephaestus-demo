@@ -31,6 +31,8 @@ else:
 
 # How long a writer waits for another to finish before it gives up.
 LOCK_WAIT_S = 10.0
+# How long a replace is retried on Windows while another program holds the log.
+REPLACE_WAIT_S = 2.0
 
 
 def append_entry(path: str | Path, duration: str, description: str) -> None:
@@ -105,13 +107,32 @@ def _replace(path: Path, content: bytes) -> None:
             out.flush()
             os.fsync(out.fileno())
         os.chmod(temporary, mode)
-        os.replace(temporary, path)
+        _move(temporary, path)
     except BaseException:
         # The error that stopped the write is the one to report, not a
         # failure to clean up after it.
         with suppress(OSError):
             os.unlink(temporary)
         raise
+
+
+def _move(source: str, target: Path) -> None:
+    """`os.replace`, retried for up to REPLACE_WAIT_S on Windows.
+
+    Windows refuses to replace a file another program has open, and a virus
+    scanner, a search indexer or a sync client opens a file soon after it is
+    written, for a moment. A read-only log never gets here (`append_entry`
+    refuses it first), so a refusal here is that moment, and it passes.
+    """
+    deadline = time.monotonic() + REPLACE_WAIT_S
+    while True:
+        try:
+            os.replace(source, target)
+            return
+        except PermissionError:
+            if sys.platform != "win32" or time.monotonic() > deadline:
+                raise
+            time.sleep(0.01)
 
 
 def _umask() -> int:

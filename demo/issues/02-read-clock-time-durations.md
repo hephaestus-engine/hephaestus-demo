@@ -16,7 +16,7 @@ before it can be totalled.
   raises `ValueError` naming the input for anything else.
 - `read_entries` (`src/durasum/log.py:29`) reads the first word of each log
   line with `parse_duration` (line 43), and `append_entry`
-  (`src/durasum/store.py:36`) checks a new entry's duration with it, so the
+  (`src/durasum/store.py:38`) checks a new entry's duration with it, so the
   log, `durasum total` and `durasum add` all take whatever it reads.
 - `tests/test_parse.py:36` lists `1:30` among the inputs
   `test_anything_else_is_refused_and_named` (line 38) refuses today.
