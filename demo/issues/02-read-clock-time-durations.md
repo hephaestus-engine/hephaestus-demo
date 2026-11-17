@@ -7,7 +7,7 @@ labels: [enhancement]
 Timesheets write a duration as hours and minutes on a clock: `1:30` for an
 hour and a half. `durasum` refuses that form today (`not a duration: '1:30'`),
 so a log copied from a timesheet has to be rewritten by hand, line by line,
-before it can be totalled.
+before it can be totaled.
 
 ## Current state
 
