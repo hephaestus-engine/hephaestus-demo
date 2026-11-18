@@ -31,6 +31,8 @@ class FakeGitHub:
         self.labels = set(labels)
         self.drop_labels = drop_labels
         self.garbage = False
+        self.lag = 0  # list reads an issue just filed stays out of the listing for
+        self.reads = 0
         self.requests = []
 
     def _label(self, name):
@@ -58,7 +60,9 @@ class FakeGitHub:
         route = urllib.parse.unquote(address.path)
         if method == "GET" and route == "/repos/demo/seeded/issues":
             page = int(urllib.parse.parse_qs(address.query)["page"][0])
-            return 200, self.issues[(page - 1) * 100 : page * 100]
+            self.reads += 1
+            listed = [i for i in self.issues if i.get("listed_from", 0) <= self.reads]
+            return 200, listed[(page - 1) * 100 : page * 100]
         if method == "GET" and route.startswith("/repos/demo/seeded/labels/"):
             name = self._label(route.removeprefix("/repos/demo/seeded/labels/"))
             return (200, {"name": name}) if name else (404, {})
@@ -68,7 +72,15 @@ class FakeGitHub:
         if method == "POST" and route == "/repos/demo/seeded/issues":
             number = len(self.issues) + 1
             labels = self._applied(body.get("labels", []))
-            self.issues.append({"number": number, "title": body["title"], "labels": labels})
+            self.issues.append(
+                {
+                    "number": number,
+                    "title": body["title"],
+                    "body": body["body"],
+                    "labels": labels,
+                    "listed_from": self.reads + 1 + self.lag,
+                }
+            )
             return 201, {"number": number, "html_url": f"http://forge/{number}", "labels": labels}
         found = re.fullmatch(r"/repos/demo/seeded/issues/(\d+)/labels", route)
         if method == "POST" and found:
@@ -120,6 +132,8 @@ def manifest(tmp_path, monkeypatch):
     path = tmp_path / "manifest.yaml"
     path.write_text('repo: "demo/seeded"\n', encoding="utf-8")
     monkeypatch.setattr(seed, "MANIFEST", path)
+    # The listing is read again at once, not every two seconds, after a filing.
+    monkeypatch.setattr(seed, "SETTLE_INTERVAL", 0, raising=False)
     return path
 
 
@@ -143,6 +157,11 @@ def _as_written(path):
     }
 
 
+def _marked(path):
+    """What a file's issue is filed with: its body, then the hidden marker."""
+    return f"{_as_written(path)['body'].rstrip()}\n\n<!-- demo-seed: {path.name} -->\n"
+
+
 def test_there_are_issue_files_to_seed():
     assert [path.name[:3] for path in ISSUE_FILES] == ["01-", "02-"]
 
@@ -150,7 +169,9 @@ def test_there_are_issue_files_to_seed():
 def test_every_issue_file_is_filed_exactly_as_written(forge, monkeypatch):
     assert _run(forge, monkeypatch) == 0
 
-    assert forge.state.filed() == [_as_written(path) for path in ISSUE_FILES]
+    assert forge.state.filed() == [
+        {**_as_written(path), "body": _marked(path)} for path in ISSUE_FILES
+    ]
     assert all(issue["labels"] for issue in forge.state.filed())
 
 
@@ -206,6 +227,48 @@ def test_a_second_run_files_nothing(forge, monkeypatch):
     _run(forge, monkeypatch)
 
     assert len(forge.state.filed()) == len(ISSUE_FILES)
+
+
+def test_a_second_run_says_what_it_skipped(forge, monkeypatch, capsys):
+    _run(forge, monkeypatch)
+    capsys.readouterr()
+
+    _run(forge, monkeypatch)
+
+    out = capsys.readouterr().out
+    assert out.count("not filed again") == len(ISSUE_FILES)
+    assert "filed #" not in out
+
+
+def test_a_second_run_files_nothing_while_the_listing_trails_the_filing(forge, monkeypatch):
+    forge.state.lag = 3  # the forge's listing shows an issue some reads after it is filed
+
+    assert _run(forge, monkeypatch) == 0
+    assert _run(forge, monkeypatch) == 0
+
+    assert len(forge.state.filed()) == len(ISSUE_FILES)
+
+
+def test_a_listing_that_never_shows_the_filing_is_an_error(forge, monkeypatch, capsys):
+    forge.state.lag = 10**6
+    monkeypatch.setattr(seed, "SETTLE_SECONDS", 0, raising=False)
+
+    assert _run(forge, monkeypatch) == 1
+
+    assert "does not show" in capsys.readouterr().err
+
+
+def test_an_issue_is_found_by_its_marker_when_its_title_was_edited(forge, monkeypatch):
+    first = ISSUE_FILES[0]
+    forge.state.issues = [
+        {"number": 5, "title": "Retitled by a person", "body": _marked(first), "labels": []}
+    ]
+
+    assert _run(forge, monkeypatch) == 0
+
+    assert [issue["title"] for issue in forge.state.filed()] == [
+        _as_written(path)["title"] for path in ISSUE_FILES[1:]
+    ]
 
 
 def test_labels_the_forge_dropped_are_an_error(forge, monkeypatch, capsys):
