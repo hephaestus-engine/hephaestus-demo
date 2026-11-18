@@ -1,6 +1,7 @@
 """File the demo issues on a forge.
 
     python scripts/seed.py --forge github --repo OWNER/NAME [--base-url URL] [--dry-run] [FILE ...]
+    python scripts/seed.py --forge gitlab --repo GROUP/NAME --base-url URL [--dry-run] [FILE ...]
 
 Each issue is a Markdown file, `demo/issues/NN-slug.md` by default, whose
 front matter gives its title and labels and whose rest is the issue's body:
@@ -15,6 +16,15 @@ front matter gives its title and labels and whose rest is the issue's body:
 The token comes from the environment (GITHUB_TOKEN, else GH_TOKEN) and is
 sent only to the forge named. `--base-url` is the forge's API address: the
 default is github.com's; a GitHub Enterprise Server is `https://HOST/api/v3`.
+
+For `--forge gitlab` the token comes from GITLAB_TOKEN, and `--base-url` is
+required: the instance's web address or its API address (`.../api/v4`), path
+prefix included (`https://HOST/gitlab`). The project may be nested in groups
+(`group/subgroup/name`); it is URL-encoded once in the API's paths. A CA
+bundle for an instance whose certificate a test CA signed is named in
+GITLAB_CA_BUNDLE (optional). The demo issues make no blocked-by link on
+GitLab: a Community Edition instance refuses one, and each issue carries its
+blockers as a `Blocked by #N` line in its body, which both forges read.
 Nothing is filed on a repository other than the one `.agent/manifest.yaml`
 names, since the engine works on that one.
 
@@ -33,7 +43,7 @@ labels silently for a token without push access. Label names are compared
 without regard to case, as the forge compares them.
 
 Standard library only, so it runs before anything is installed. `--forge` is
-an argument from the start: another forge is a new backend beside GitHub's.
+an argument from the start: another forge is a new backend beside these.
 """
 
 from __future__ import annotations
@@ -42,6 +52,7 @@ import argparse
 import json
 import os
 import re
+import ssl
 import sys
 import time
 import urllib.error
@@ -61,6 +72,8 @@ MARKER_PATTERN = re.compile(r"<!-- demo-seed: (?P<name>[^\s>]+) -->")
 SETTLE_SECONDS = 60.0
 SETTLE_INTERVAL = 2.0
 TOKEN_VARIABLES = ("GITHUB_TOKEN", "GH_TOKEN")
+GITLAB_TOKEN_VARIABLES = ("GITLAB_TOKEN",)
+GITLAB_CA_VARIABLE = "GITLAB_CA_BUNDLE"
 
 
 class SeedError(Exception):
@@ -237,6 +250,153 @@ class GitHub:
         return True
 
 
+class GitLab:
+    """GitLab's REST API (v4), on gitlab.com or a self-managed instance.
+
+    Written against the replies captured from GitLab CE 19.5.3: an issue is
+    addressed by its `iid`, its `labels` are names, its `description` may be
+    null, and a label that exists is refused with 409. A listing is read by
+    `page` until a page is short (the `Link` header's `next` is the same
+    walk; no listing's headers were captured).
+    """
+
+    token_variables = GITLAB_TOKEN_VARIABLES
+    settle = GitHub.settle  # the same wait on the listing: it needs only existing_issues
+
+    def __init__(self, repo: str, token: str, base_url: str | None):
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)+", repo):
+            raise SeedError(f"--repo is GROUP/NAME (groups may nest), got {repo!r}")
+        if not base_url:
+            raise SeedError("--base-url is required for gitlab: the instance's web address")
+        self.repo = repo
+        self.token = token
+        base = base_url.rstrip("/")
+        if not base.endswith("/api/v4"):
+            base += "/api/v4"
+        # The project path is encoded once, `/` as `%2F`, and sent as encoded.
+        self.project = f"{base}/projects/{urllib.parse.quote(repo, safe='')}"
+        self._labels: list[str] | None = None
+        bundle = os.environ.get(GITLAB_CA_VARIABLE)
+        try:
+            self._context = ssl.create_default_context(cafile=bundle) if bundle else None
+        except (OSError, ssl.SSLError) as exc:
+            raise SeedError(f"{GITLAB_CA_VARIABLE} cannot be read as a CA bundle: {exc}") from None
+
+    def _call(self, method: str, path: str, payload: dict | None = None):
+        data = None if payload is None else json.dumps(payload).encode("utf-8")
+        request = urllib.request.Request(
+            f"{self.project}{path}",
+            data=data,
+            method=method,
+            headers={
+                "Accept": "application/json",
+                "PRIVATE-TOKEN": self.token,
+                "Content-Type": "application/json",
+                "User-Agent": "durasum-demo-seed",
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=30, context=self._context) as response:
+                text = response.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            variable = self.token_variables[0]
+            if exc.code == 401:
+                raise SeedError(
+                    f"GitLab refused the token in {variable} (401 Unauthorized): "
+                    "it is revoked, expired or not for this instance"
+                ) from None
+            if exc.code == 403:
+                raise SeedError(
+                    f"GitLab refused the token in {variable} for this project (403 Forbidden): "
+                    "it needs the `api` scope and the Developer role or more"
+                ) from None
+            if exc.code == 404:
+                raise SeedError(
+                    f"GitLab has no project {self.repo}, or the token in {variable} cannot "
+                    "see it (404 Not Found)"
+                ) from None
+            raise
+        try:
+            return json.loads(text) if text else None
+        except json.JSONDecodeError:
+            raise SeedError(f"the forge's answer to {method} {path} is not JSON") from None
+
+    def _pages(self, path: str):
+        page = 1
+        while True:
+            joiner = "&" if "?" in path else "?"
+            batch = self._call("GET", f"{path}{joiner}per_page=100&page={page}")
+            yield from batch
+            if len(batch) < 100:
+                return
+            page += 1
+
+    @staticmethod
+    def _normalized(item: dict) -> dict:
+        """An issue as the rest of the script reads it: GitHub's keys."""
+        return {
+            "number": item["iid"],
+            "title": item["title"],
+            "body": item.get("description") or "",
+            "html_url": item["web_url"],
+            "labels": [{"name": name} for name in item.get("labels", [])],
+        }
+
+    def existing_issues(self) -> Existing:
+        """Every issue the project has, open or closed, by title and by the
+        file its marker names."""
+        found = Existing()
+        for raw in self._pages("/issues?state=all&scope=all"):
+            item = self._normalized(raw)
+            found.by_title.setdefault(item["title"], item)
+            marked = MARKER_PATTERN.search(item["body"])
+            if marked:
+                found.by_file.setdefault(marked["name"], item)
+        return found
+
+    def ensure_label(self, name: str) -> bool:
+        """Create the label unless the project (or a group above it) has it;
+        True when created. Names are compared without regard to case: the
+        forge refuses a second label that differs only in case."""
+        if self._labels is None:
+            self._labels = [label["name"] for label in self._pages("/labels")]
+        if name.casefold() in {have.casefold() for have in self._labels}:
+            return False
+        try:
+            self._call("POST", "/labels", {"name": name, "color": "#ededed"})
+        except urllib.error.HTTPError as exc:
+            if exc.code != 409:  # 409 "Label already exists": present after all
+                raise
+            return False
+        self._labels.append(name)
+        return True
+
+    def file_issue(self, issue: Issue) -> tuple[int, str]:
+        """File the issue; its number (iid) and address."""
+        created = self._call(
+            "POST",
+            "/issues",
+            {
+                "title": issue.title,
+                "description": issue.filed_body,
+                "labels": ",".join(issue.labels),
+            },
+        )
+        item = self._normalized(created)
+        _require_labels(issue, item["labels"], f"#{item['number']} was filed")
+        return item["number"], item["html_url"]
+
+    def label_issue(self, issue: Issue, existing: dict) -> bool:
+        """Add to an issue filed earlier the labels it lacks; True when it lacked any."""
+        missing = _missing(issue.labels, existing.get("labels", []))
+        if not missing:
+            return False
+        number = existing["number"]
+        updated = self._call("PUT", f"/issues/{number}", {"add_labels": ",".join(missing)})
+        _require_labels(issue, self._normalized(updated)["labels"], f"#{number} is still")
+        return True
+
+
 def _missing(wanted: tuple[str, ...], labels: list[dict]) -> list[str]:
     """The wanted label names not among the labels the forge returned."""
     have = {label["name"].casefold() for label in labels}
@@ -252,14 +412,18 @@ def _require_labels(issue: Issue, labels: list[dict], what: str) -> None:
         )
 
 
-FORGES = {"github": GitHub}
+FORGES = {"github": GitHub, "gitlab": GitLab}
 
 
 def _arguments(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="File the demo issues on a forge.")
     parser.add_argument("--forge", required=True, choices=sorted(FORGES))
-    parser.add_argument("--repo", required=True, help="OWNER/NAME of the repository to seed")
-    parser.add_argument("--base-url", default="https://api.github.com", help="the forge's API")
+    parser.add_argument("--repo", required=True, help="OWNER/NAME (GitLab: GROUP/.../NAME)")
+    parser.add_argument(
+        "--base-url",
+        help="github: the API (default api.github.com); gitlab: the instance's web or API "
+        "address, path prefix included",
+    )
     parser.add_argument("--dry-run", action="store_true", help="say what would be filed")
     parser.add_argument("files", nargs="*", type=Path, help=f"default: demo/issues/{ISSUE_FILES}")
     return parser.parse_args(argv)
@@ -294,10 +458,14 @@ def main(argv: list[str] | None = None) -> int:
                 labels = ", ".join(issue.labels) or "no labels"
                 print(f"would file  {issue.title}  ({labels})  from {issue.source.name}")
             return 0
-        token = next((os.environ[name] for name in TOKEN_VARIABLES if os.environ.get(name)), "")
+        variables = GITLAB_TOKEN_VARIABLES if args.forge == "gitlab" else TOKEN_VARIABLES
+        token = next((os.environ[name] for name in variables if os.environ.get(name)), "")
         if not token:
-            raise SeedError(f"no token: set {' or '.join(TOKEN_VARIABLES)}")
-        forge = FORGES[args.forge](args.repo, token, args.base_url)
+            raise SeedError(f"no token: set {' or '.join(variables)}")
+        base_url = args.base_url
+        if base_url is None and args.forge == "github":
+            base_url = "https://api.github.com"
+        forge = FORGES[args.forge](args.repo, token, base_url)
         existing = forge.existing_issues()
         for name in sorted({label for issue in issues for label in issue.labels}):
             if forge.ensure_label(name):
