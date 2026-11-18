@@ -18,9 +18,16 @@ default is github.com's; a GitHub Enterprise Server is `https://HOST/api/v3`.
 Nothing is filed on a repository other than the one `.agent/manifest.yaml`
 names, since the engine works on that one.
 
-An issue whose title the repository already has, open or closed, is not
-filed again, so a second run files nothing twice; the labels it lacks are
-added to it. Labels missing from the repository are created first, and an
+Each filed body ends with a hidden marker naming its file
+(`<!-- demo-seed: NN-slug.md -->`). An issue the repository already has,
+open or closed, found by that marker or, for one filed before the marker, by
+its title, is not filed again, so a second run files nothing twice; the
+labels it lacks are added to it. The forge's listing can trail a filing by
+seconds, so after filing the script waits until the listing shows every issue
+it filed, and fails, saying so, when it does not: a run that returned sooner
+could be followed by a second that filed both again.
+
+Labels missing from the repository are created first, and an
 issue the forge left without a label asked for is an error: the forge drops
 labels silently for a token without push access. Label names are compared
 without regard to case, as the forge compares them.
@@ -36,16 +43,23 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = ROOT / ".agent" / "manifest.yaml"
 ISSUES = ROOT / "demo" / "issues"
 ISSUE_FILES = "[0-9][0-9]-*.md"
+MARKER = "<!-- demo-seed: {name} -->"
+MARKER_PATTERN = re.compile(r"<!-- demo-seed: (?P<name>[^\s>]+) -->")
+# How long, and how often, the listing is read after a filing for it to show
+# what was filed; the tests shorten both.
+SETTLE_SECONDS = 60.0
+SETTLE_INTERVAL = 2.0
 TOKEN_VARIABLES = ("GITHUB_TOKEN", "GH_TOKEN")
 
 
@@ -59,6 +73,15 @@ class Issue:
     title: str
     labels: tuple[str, ...]
     body: str
+
+    @property
+    def marker(self) -> str:
+        return MARKER.format(name=self.source.name)
+
+    @property
+    def filed_body(self) -> str:
+        """The body as it is filed: the file's, then the hidden marker."""
+        return f"{self.body.rstrip()}\n\n{self.marker}\n"
 
 
 def parse_issue(path: Path) -> Issue:
@@ -99,6 +122,18 @@ def _unquote(value: str) -> str:
     return value
 
 
+@dataclass
+class Existing:
+    """The issues a repository already has."""
+
+    by_title: dict[str, dict] = field(default_factory=dict)
+    by_file: dict[str, dict] = field(default_factory=dict)
+
+    def of(self, issue: Issue) -> dict | None:
+        """The issue filed for this file: by its marker, else by its title."""
+        return self.by_file.get(issue.source.name) or self.by_title.get(issue.title)
+
+
 class GitHub:
     """GitHub's REST API, on github.com or a GitHub Enterprise Server."""
 
@@ -130,19 +165,45 @@ class GitHub:
         except json.JSONDecodeError:
             raise SeedError(f"the forge's answer to {method} {path} is not JSON") from None
 
-    def existing_issues(self) -> dict[str, dict]:
-        """Every issue the repository has, open or closed, by title; pull
-        requests, which the forge lists among the issues, are left out."""
-        issues: dict[str, dict] = {}
+    def existing_issues(self) -> Existing:
+        """Every issue the repository has, open or closed, by title and by
+        the file its marker names; pull requests, which the forge lists among
+        the issues, are left out."""
+        found = Existing()
         page = 1
         while True:
             batch = self._call("GET", f"/issues?state=all&per_page=100&page={page}")
             for item in batch:
-                if "pull_request" not in item:
-                    issues.setdefault(item["title"], item)
+                if "pull_request" in item:
+                    continue
+                found.by_title.setdefault(item["title"], item)
+                marked = MARKER_PATTERN.search(item.get("body") or "")
+                if marked:
+                    found.by_file.setdefault(marked["name"], item)
             if len(batch) < 100:
-                return issues
+                return found
             page += 1
+
+    def settle(self, issues: list[Issue], numbers: dict[str, int]) -> None:
+        """Wait until the listing shows each issue just filed (its file name
+        to its number); SeedError when it does not within SETTLE_SECONDS."""
+        deadline = time.monotonic() + SETTLE_SECONDS
+        while True:
+            listed = self.existing_issues()
+            missing = [
+                name
+                for name, number in numbers.items()
+                if (listed.by_file.get(name) or {}).get("number") != number
+            ]
+            if not missing:
+                return
+            if time.monotonic() >= deadline:
+                raise SeedError(
+                    f"the forge's listing does not show {', '.join(missing)} after "
+                    f"{SETTLE_SECONDS:g} seconds: wait before running this again, or the "
+                    "issues are filed twice"
+                )
+            time.sleep(SETTLE_INTERVAL)
 
     def ensure_label(self, name: str) -> bool:
         """Create the label unless the repository has it; True when created."""
@@ -160,7 +221,7 @@ class GitHub:
         created = self._call(
             "POST",
             "/issues",
-            {"title": issue.title, "body": issue.body, "labels": list(issue.labels)},
+            {"title": issue.title, "body": issue.filed_body, "labels": list(issue.labels)},
         )
         _require_labels(issue, created.get("labels", []), f"#{created['number']} was filed")
         return created["number"], created["html_url"]
@@ -241,15 +302,19 @@ def main(argv: list[str] | None = None) -> int:
         for name in sorted({label for issue in issues for label in issue.labels}):
             if forge.ensure_label(name):
                 print(f"created label  {name}")
+        filed: dict[str, int] = {}
         for issue in issues:
-            found = existing.get(issue.title)
+            found = existing.of(issue)
             if found is None:
                 number, url = forge.file_issue(issue)
+                filed[issue.source.name] = number
                 print(f"filed #{number}  {issue.title}  {url}")
             elif forge.label_issue(issue, found):
                 print(f"labelled #{found['number']}  {issue.title}")
             else:
-                print(f"exists     {issue.title}")
+                print(f"exists     {issue.title}  (#{found['number']}, not filed again)")
+        if filed:
+            forge.settle(issues, filed)
     except SeedError as exc:
         print(f"seed: {exc}", file=sys.stderr)
         return 1

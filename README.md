@@ -154,8 +154,10 @@ has changed. Nothing force-pushes: a reset is a new repository.
 
    A GitHub Enterprise Server adds `--base-url https://HOST/api/v3`. The
    script refuses a repository the manifest does not name. An issue whose
-   title the repository already has is not filed again, so running it twice
-   files nothing twice; the labels it lacks are added.
+   title the repository already has, or whose hidden `demo-seed` marker it
+   carries, is not filed again, so running it twice files nothing twice (the
+   script waits for the forge's listing to show what it filed, so a second
+   run straight after sees it); the labels it lacks are added.
 4. Point the engine at a clone of the new repository, run
    `agentctl check <clone>`, and release one demo issue for a run by adding
    the `agent:go` label to it.
