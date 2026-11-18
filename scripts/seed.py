@@ -80,6 +80,30 @@ class SeedError(Exception):
     """Something that stops the seeding, said in one line."""
 
 
+class _RefuseRedirects(urllib.request.HTTPRedirectHandler):
+    """urllib follows a redirect and sends its headers on, the token among
+    them; a forge that redirects is given the wrong address, so it is refused."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise SeedError("the forge redirected: give its https address")
+
+
+def _open(request: urllib.request.Request, context: ssl.SSLContext | None = None):
+    """Open the request with an opener that never follows a redirect."""
+    opener = urllib.request.build_opener(
+        _RefuseRedirects, urllib.request.HTTPSHandler(context=context)
+    )
+    try:
+        return opener.open(request, timeout=30)
+    except urllib.error.HTTPError:
+        raise
+    except urllib.error.URLError as exc:
+        where = urllib.parse.urlsplit(request.full_url)
+        raise SeedError(
+            f"the forge at {where.scheme}://{where.netloc} could not be reached: {exc.reason}"
+        ) from None
+
+
 @dataclass(frozen=True)
 class Issue:
     source: Path
@@ -171,7 +195,7 @@ class GitHub:
                 "X-GitHub-Api-Version": "2022-11-28",
             },
         )
-        with urllib.request.urlopen(request, timeout=30) as response:
+        with _open(request) as response:
             text = response.read().decode("utf-8")
         try:
             return json.loads(text) if text else None
@@ -296,7 +320,7 @@ class GitLab:
             },
         )
         try:
-            with urllib.request.urlopen(request, timeout=30, context=self._context) as response:
+            with _open(request, self._context) as response:
                 text = response.read().decode("utf-8")
         except urllib.error.HTTPError as exc:
             variable = self.token_variables[0]
@@ -490,9 +514,6 @@ def main(argv: list[str] | None = None) -> int:
         print(
             f"seed: the forge answered {exc.code} {exc.reason} for {exc.filename}", file=sys.stderr
         )
-        return 1
-    except urllib.error.URLError as exc:
-        print(f"seed: the forge could not be reached: {exc.reason}", file=sys.stderr)
         return 1
     except TimeoutError:
         print("seed: the forge did not answer in time", file=sys.stderr)

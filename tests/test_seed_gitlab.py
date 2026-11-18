@@ -16,6 +16,9 @@ a group label showing in the project's label list.
 import importlib.util
 import json
 import re
+import shutil
+import ssl
+import subprocess
 import sys
 import threading
 import urllib.parse
@@ -40,14 +43,19 @@ class FakeGitLab:
     `prefix` is the path the instance is served under; `project` the path of
     the one project it has, as a person writes it."""
 
-    def __init__(self, project="demo/seeded", prefix="", labels=(), titles=()):
+    def __init__(self, project="demo/seeded", prefix="", labels=(), titles=(), closed=()):
         self.project = project
         self.encoded = urllib.parse.quote(project, safe="")
         self.prefix = prefix
         self.labels = list(labels)
+        self.hidden_labels = set()  # in the project, yet left out of its label listing
         self.issues = []
         for iid, title in enumerate(titles, start=1):
             self.issues.append(self._issue(iid, title, None, []))
+        for title in closed:
+            issue = self._issue(len(self.issues) + 1, title, None, [])
+            issue["state"] = "closed"
+            self.issues.append(issue)
         self.token = TOKEN
         self.lag = 0  # list reads an issue just filed stays out of the listing for
         self.reads = 0
@@ -78,7 +86,8 @@ class FakeGitLab:
         route = address.path[len(base) :]
         query = urllib.parse.parse_qs(address.query)
         if method == "GET" and route == "/labels":  # DOCS: pages by per_page and page
-            return 200, self._page(query, [{"id": n, "name": x} for n, x in enumerate(self.labels)])
+            shown = [x for x in self.labels if x not in self.hidden_labels]
+            return 200, self._page(query, [{"id": n, "name": x} for n, x in enumerate(shown)])
         if method == "POST" and route == "/labels":
             if any(have.casefold() == body["name"].casefold() for have in self.labels):
                 return 409, {"message": "Label already exists"}
@@ -86,7 +95,12 @@ class FakeGitLab:
             return 201, {"name": body["name"], "color": body["color"], "is_project_label": True}
         if method == "GET" and route == "/issues":  # DOCS: pages by per_page and page
             self.reads += 1
-            listed = [i for i in self.issues if i.get("listed_from", 0) <= self.reads]
+            state = query.get("state", ["all"])[0]
+            listed = [
+                i
+                for i in self.issues
+                if i.get("listed_from", 0) <= self.reads and state in ("all", i["state"])
+            ]
             return 200, self._page(query, listed)
         if method == "POST" and route == "/issues":
             if "title" not in body:
@@ -123,7 +137,7 @@ class FakeGitLab:
         return rows[(page - 1) * per_page : page * per_page]
 
 
-def _serve(state):
+def _serve(state, tls=None):
     class Handler(BaseHTTPRequestHandler):
         def _answer(self):
             length = int(self.headers.get("Content-Length") or 0)
@@ -145,6 +159,10 @@ def _serve(state):
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     server.state = state
+    if tls:
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(*tls)
+        server.socket = context.wrap_socket(server.socket, server_side=True)
     threading.Thread(
         target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
     ).start()
@@ -456,3 +474,139 @@ def test_a_dry_run_sends_nothing(forge, monkeypatch, capsys):
 
     assert capsys.readouterr().out.count("would file") == len(ISSUE_FILES)
     assert forge.state.requests == []
+
+
+def test_a_label_the_listing_hides_and_the_forge_refuses_with_409_is_taken_as_present(
+    make_forge, monkeypatch, capsys
+):
+    # The 409 branch of ensure_label: the label is there after all.
+    hidden = _as_written(ISSUE_FILES[0])["labels"][0]
+    forge = make_forge(labels=[hidden])
+    forge.state.hidden_labels = {hidden}
+
+    assert _run(forge, monkeypatch) == 0
+
+    posts = [r for r in forge.state.requests if r[0] == "POST" and r[1].endswith("/labels")]
+    assert hidden in [r[3]["name"] for r in posts]  # the 409 was provoked
+    assert f"created label  {hidden}" not in capsys.readouterr().out
+    assert len(forge.state.filed()) == len(ISSUE_FILES)
+
+
+def test_a_closed_issue_is_not_filed_again(make_forge, monkeypatch):
+    # existing_issues asks state=all; the fake honors `state`, as GitLab does.
+    forge = make_forge(closed=[_as_written(ISSUE_FILES[0])["title"]])
+
+    assert _run(forge, monkeypatch) == 0
+
+    assert [i["title"] for i in forge.state.filed()] == [
+        _as_written(p)["title"] for p in ISSUE_FILES[1:]
+    ]
+
+
+def _tls_files(directory):
+    """A throwaway CA and a certificate for 127.0.0.1 it signed, made with openssl."""
+    openssl = shutil.which("openssl")
+    if openssl is None:
+        pytest.skip("openssl is not installed: no throwaway CA can be made")
+
+    def run(*args):
+        subprocess.run([openssl, *args], cwd=directory, check=True, capture_output=True)
+
+    (directory / "ext.cnf").write_text("subjectAltName=IP:127.0.0.1\n", encoding="utf-8")
+    run(
+        *("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "2"),
+        *("-keyout", "ca.key", "-out", "ca.pem", "-subj", "/CN=demo-test-ca"),
+    )
+    run(
+        *("req", "-newkey", "rsa:2048", "-nodes", "-keyout", "srv.key"),
+        *("-out", "srv.csr", "-subj", "/CN=127.0.0.1"),
+    )
+    run(
+        *("x509", "-req", "-in", "srv.csr", "-CA", "ca.pem", "-CAkey", "ca.key"),
+        *("-CAcreateserial", "-out", "srv.pem", "-days", "2", "-extfile", "ext.cnf"),
+    )
+    return directory / "ca.pem", (str(directory / "srv.pem"), str(directory / "srv.key"))
+
+
+def test_a_ca_bundle_is_used_to_trust_an_instance_a_test_ca_signed(tmp_path, monkeypatch, capsys):
+    bundle, tls = _tls_files(tmp_path)
+    state = FakeGitLab()
+    server = _serve(state, tls=tls)
+    try:
+        monkeypatch.setenv("GITLAB_TOKEN", TOKEN)
+        address = f"https://127.0.0.1:{server.server_address[1]}"
+        args = ["--forge", "gitlab", "--repo", "demo/seeded", "--base-url", address]
+
+        monkeypatch.setenv("GITLAB_CA_BUNDLE", str(bundle))
+        assert seed.main(args) == 0
+        assert len(state.filed()) == len(ISSUE_FILES)
+        capsys.readouterr()
+
+        monkeypatch.delenv("GITLAB_CA_BUNDLE")
+        before = len(state.requests)
+        assert seed.main(args) == 1
+        seen = capsys.readouterr()
+        assert address in seen.err
+        assert "could not be reached" in seen.err
+        assert TOKEN not in seen.out + seen.err
+        assert len(state.requests) == before
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def _redirecting_pair(status):
+    """An origin that answers every request with a redirect to a target, and the
+    target, which records what reaches it."""
+    reached = []
+
+    class Target(BaseHTTPRequestHandler):
+        def _answer(self):
+            reached.append(dict(self.headers))
+            self.send_response(200)
+            self.send_header("Content-Length", "2")
+            self.end_headers()
+            self.wfile.write(b"[]")
+
+        do_GET = do_POST = do_PUT = _answer
+
+        def log_message(self, *args):
+            pass
+
+    target = ThreadingHTTPServer(("127.0.0.1", 0), Target)
+
+    class Origin(Target):
+        def _answer(self):
+            self.send_response(status)
+            self.send_header("Location", f"http://127.0.0.1:{target.server_address[1]}/elsewhere")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        do_GET = do_POST = do_PUT = _answer
+
+    origin = ThreadingHTTPServer(("127.0.0.1", 0), Origin)
+    for server in (target, origin):
+        threading.Thread(
+            target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+        ).start()
+    return origin, target, reached
+
+
+@pytest.mark.parametrize("status", [301, 302, 307])
+def test_a_redirect_is_refused_and_the_token_goes_nowhere_else(monkeypatch, capsys, status):
+    origin, target, reached = _redirecting_pair(status)
+    try:
+        monkeypatch.setenv("GITLAB_TOKEN", TOKEN)
+        code = seed.main(
+            ["--forge", "gitlab", "--repo", "demo/seeded", "--base-url", _address(origin)]
+        )
+    finally:
+        for server in (origin, target):
+            server.shutdown()
+            server.server_close()
+
+    assert code == 1
+    seen = capsys.readouterr()
+    assert "the forge redirected: give its https address" in seen.err
+    assert TOKEN not in seen.out + seen.err
+    assert reached == []
