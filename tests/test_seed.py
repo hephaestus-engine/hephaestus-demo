@@ -400,3 +400,53 @@ def test_quoted_values_and_several_labels_are_read(tmp_path):
         ("bug", "good first issue"),
         "body\n",
     )
+
+
+@pytest.mark.parametrize("status", [301, 302])
+def test_a_redirect_is_refused_and_the_token_goes_nowhere_else(monkeypatch, capsys, status):
+    reached = []
+
+    class Target(BaseHTTPRequestHandler):
+        def _answer(self):
+            reached.append(dict(self.headers))
+            self.send_response(200)
+            self.send_header("Content-Length", "2")
+            self.end_headers()
+            self.wfile.write(b"[]")
+
+        do_GET = do_POST = _answer
+
+        def log_message(self, *args):
+            pass
+
+    target = ThreadingHTTPServer(("127.0.0.1", 0), Target)
+
+    class Origin(Target):
+        def _answer(self):
+            self.send_response(status)
+            self.send_header("Location", f"http://127.0.0.1:{target.server_address[1]}/elsewhere")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        do_GET = do_POST = _answer
+
+    origin = ThreadingHTTPServer(("127.0.0.1", 0), Origin)
+    for server in (target, origin):
+        threading.Thread(
+            target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+        ).start()
+    try:
+        monkeypatch.delenv("GH_TOKEN", raising=False)
+        monkeypatch.setenv("GITHUB_TOKEN", "test-token")
+        url = f"http://127.0.0.1:{origin.server_address[1]}"
+        code = seed.main(["--forge", "github", "--repo", "demo/seeded", "--base-url", url])
+    finally:
+        for server in (origin, target):
+            server.shutdown()
+            server.server_close()
+
+    assert code == 1
+    seen = capsys.readouterr()
+    assert "the forge redirected: give its https address" in seen.err
+    assert "test-token" not in seen.out + seen.err
+    assert reached == []

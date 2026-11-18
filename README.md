@@ -152,9 +152,24 @@ has changed. Nothing force-pushes: a reset is a new repository.
    $ python scripts/seed.py --forge github --repo OWNER/NAME
    ```
 
-   A GitHub Enterprise Server adds `--base-url https://HOST/api/v3`. The
-   script refuses a repository the manifest does not name. An issue whose
-   title the repository already has, or whose hidden `demo-seed` marker it
+   A GitHub Enterprise Server adds `--base-url https://HOST/api/v3`.
+
+   For a GitLab project (gitlab.com or a self-managed instance), put the
+   token, with the `api` scope and the Developer role or more, in
+   `GITLAB_TOKEN`, and give the instance's web address, path prefix included.
+   The project is its path, groups and subgroups too, as the manifest names it:
+
+   ```console
+   $ python scripts/seed.py --forge gitlab --repo GROUP/SUBGROUP/NAME --base-url https://HOST/PREFIX --dry-run
+   $ python scripts/seed.py --forge gitlab --repo GROUP/SUBGROUP/NAME --base-url https://HOST/PREFIX
+   ```
+
+   `--base-url` may also be the API address (`.../api/v4`); an instance whose
+   certificate a test CA signed names the CA's bundle in `GITLAB_CA_BUNDLE`.
+   GitLab Community Edition refuses blocked-by links, so none is made: each
+   issue states its blockers in a `Blocked by #N` line, which both forges
+   read. The script refuses a repository the manifest does not name. An issue
+   whose title the repository already has, or whose hidden `demo-seed` marker it
    carries, is not filed again, so running it twice files nothing twice (the
    script waits for the forge's listing to show what it filed, so a second
    run straight after sees it); the labels it lacks are added.
