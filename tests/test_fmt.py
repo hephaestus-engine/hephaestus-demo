@@ -27,7 +27,6 @@ def test_a_negative_duration_carries_one_sign(seconds, text):
 # the minutes are taken from the whole duration, not from what is left after the
 # hours. Expected to fail until that demo's change lands, which removes this marker;
 # with xfail_strict, a fix that leaves the marker fails the suite.
-@pytest.mark.xfail(reason="demo 1: hours print their minutes twice")
 @pytest.mark.parametrize(
     ("seconds", "text"),
     [
