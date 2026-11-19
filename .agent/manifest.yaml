@@ -58,10 +58,7 @@ protected_paths:
 
 dispatch:
   # Nothing is dispatched until a person releases an issue.
-  mode: auto
-  # Every tier a run may write at is under the cap, so the protected scope is
-  # what parks an unreleased issue (engine issue 168, case a).
-  auto_max_tier: T3
+  mode: manual
   # Every change lands as a pull request a person merges.
   land: pr
   # A person merges each demo's pull request; nothing asks the engine to.
