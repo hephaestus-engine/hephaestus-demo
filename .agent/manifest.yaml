@@ -16,7 +16,9 @@ schema_version: 1
 # anything else (README, "Resetting a demo"); scripts/seed.py refuses to file
 # issues on any other.
 repo: "hephaestus-engine/hephaestus-demo"
-default_branch: main
+# The live check's branch (engine issue 168): the engine's target while the check runs,
+# deleted after it. The demo's main is not changed.
+target_branch: "live-check-168-202611191822"
 
 # The review rules are the reviewer's: every review prompt points at this
 # file, and only the files under rules/ are handed to every run, the build
@@ -60,7 +62,7 @@ dispatch:
   # Every change lands as a pull request a person merges.
   land: pr
   # A person merges each demo's pull request; nothing asks the engine to.
-  land_pr_label: null
+  land_pr_label: "agent:land-pr"
 
 limits:
   max_output_tokens_per_window: null
