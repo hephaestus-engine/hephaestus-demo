@@ -35,3 +35,9 @@ def test_the_total_subtracts_corrections():
 
 def test_an_empty_log_totals_zero():
     assert total(read_entries([])) == 0
+
+
+def test_corrections_that_outweigh_the_entries_total_below_zero():
+    entries = read_entries(["10m  review\n", "-25m  correction: it ran short\n"])
+
+    assert total(entries) == -900
