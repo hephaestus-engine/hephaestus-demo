@@ -126,9 +126,11 @@ has changed. Nothing force-pushes: a reset is a new repository.
 1. Create an empty repository on the forge: no README, no licence, no issues.
 2. Start from the demo's starting point, and name the new repository in the
    manifest. The engine works on the repository its manifest names, and
-   `repo` in `.agent/manifest.yaml` is a placeholder no forge account can
-   hold, so a copy that skips this step fails on its first tracker call
-   instead of reaching someone else's repository:
+   `repo` in `.agent/manifest.yaml` names the demo's home, not the copy. A
+   copy that skips this step has an engine working on the demo's home, and a
+   seed script refusing to file issues anywhere else; the copy's token
+   normally cannot write to the demo's home, so it fails at the tracker's
+   first write or at the permission rows of `agentctl connect`:
 
    ```console
    $ git clone <this repository> durasum-demo && cd durasum-demo

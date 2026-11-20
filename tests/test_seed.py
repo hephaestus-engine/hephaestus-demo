@@ -128,7 +128,7 @@ def forge():
 @pytest.fixture(autouse=True)
 def manifest(tmp_path, monkeypatch):
     """A manifest naming the repository the tests seed, in place of the
-    demo's own, which names a placeholder."""
+    demo's own, which names the demo's home."""
     path = tmp_path / "manifest.yaml"
     path.write_text('repo: "demo/seeded"\n', encoding="utf-8")
     monkeypatch.setattr(seed, "MANIFEST", path)
