@@ -19,6 +19,24 @@ def test_total_in_seconds(tmp_path, capsys):
     assert capsys.readouterr().out == "8100\n"
 
 
+def test_total_in_seconds_with_clock_and_unit_durations(tmp_path, capsys):
+    log = tmp_path / "work.log"
+    log.write_text("1:30  planning\n45m  review\n", encoding="utf-8")
+
+    assert main(["total", str(log), "--seconds"]) == 0
+
+    assert capsys.readouterr().out == "8100\n"
+
+
+def test_total_in_seconds_with_a_negative_clock_duration(tmp_path, capsys):
+    log = tmp_path / "work.log"
+    log.write_text("45m  review\n-1:30  correction\n", encoding="utf-8")
+
+    assert main(["total", str(log), "--seconds"]) == 0
+
+    assert capsys.readouterr().out == "-2700\n"
+
+
 def test_add_then_total(tmp_path, capsys):
     log = tmp_path / "work.log"
 
@@ -27,6 +45,26 @@ def test_add_then_total(tmp_path, capsys):
 
     assert log.read_text(encoding="utf-8") == "25m  write the notes\n"
     assert capsys.readouterr().out == "25m\n"
+
+
+def test_add_takes_a_clock_duration_as_written(tmp_path, capsys):
+    log = tmp_path / "work.log"
+
+    assert main(["add", str(log), "1:30", "planning"]) == 0
+    assert main(["total", str(log), "--seconds"]) == 0
+
+    assert log.read_text(encoding="utf-8") == "1:30  planning\n"
+    assert capsys.readouterr().out == "5400\n"
+
+
+def test_add_takes_a_negative_clock_duration_as_written(tmp_path, capsys):
+    log = tmp_path / "work.log"
+
+    assert main(["add", str(log), "-1:30", "correction"]) == 0
+    assert main(["total", str(log), "--seconds"]) == 0
+
+    assert log.read_text(encoding="utf-8") == "-1:30  correction\n"
+    assert capsys.readouterr().out == "-5400\n"
 
 
 def test_add_takes_a_correction_as_written(tmp_path, capsys):

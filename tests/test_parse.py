@@ -32,8 +32,50 @@ def test_a_leading_minus_is_a_correction(text, seconds):
 
 
 @pytest.mark.parametrize(
+    ("text", "seconds"),
+    [
+        ("1:30", 5400),
+        ("0:45", 2700),
+        ("12:05", 43500),
+    ],
+)
+def test_the_clock_form_is_read(text, seconds):
+    assert parse_duration(text) == seconds
+
+
+@pytest.mark.parametrize(
+    ("text", "seconds"),
+    [
+        ("-1:30", -5400),
+        ("-0:45", -2700),
+        ("-12:05", -43500),
+    ],
+)
+def test_a_negative_clock_duration_is_a_correction(text, seconds):
+    assert parse_duration(text) == seconds
+
+
+@pytest.mark.parametrize(
     "text",
-    ["", " ", "-", "h", "1x", "15", "1m1h", "--15m", "+15m", "1.5h", "1h 30m", "1:30"],
+    [
+        "",
+        " ",
+        "-",
+        "h",
+        "1x",
+        "15",
+        "1m1h",
+        "--15m",
+        "+15m",
+        "1.5h",
+        "1h 30m",
+        "1:5",
+        "1:75",
+        "1:30:00",
+        "-1:5",
+        "-1:75",
+        "-1:30:00",
+    ],
 )
 def test_anything_else_is_refused_and_named(text):
     with pytest.raises(ValueError) as refused:

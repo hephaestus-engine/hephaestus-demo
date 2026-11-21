@@ -47,10 +47,12 @@ line.
 One entry a line: a duration, then what the time was spent on. A line
 starting with `#` is a comment, and blank lines are skipped.
 
-A duration is written in the unit form: hours, minutes and seconds, each
+A duration may be written in the unit form: hours, minutes and seconds, each
 optional but in that order - `2h`, `45m`, `1h30m`, `90s`, `1h5m30s`. Case does
-not matter. A leading `-` makes it negative: a correction to an earlier entry
-is recorded as a negative entry, such as `-15m`, and subtracts from the total.
+not matter. The clock form is `H:MM`: one or more digits of hours, a colon,
+and exactly two digits of minutes from `00` to `59`, such as `1:30`. A leading
+`-` makes either form negative: a correction to an earlier entry, such as
+`-15m` or `-1:30`, subtracts from the total.
 
 `durasum add` never rewrites a log in place: it writes the new content beside
 the log and replaces it in one step, keeping every existing line byte for
