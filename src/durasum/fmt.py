@@ -11,7 +11,7 @@ def format_duration(seconds: int) -> str:
     sign = "-" if seconds < 0 else ""
     remaining = abs(seconds)
     hours, rest = divmod(remaining, 3600)
-    minutes, secs = divmod(remaining, 60)
+    minutes, secs = divmod(rest, 60)
     parts = []
     if hours:
         parts.append(f"{hours}h")
