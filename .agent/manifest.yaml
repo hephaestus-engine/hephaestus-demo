@@ -14,7 +14,7 @@ schema_version: 1
 # a demo"), because the engine works on the repository its manifest names, and
 # scripts/seed.py refuses to file issues on any other.
 repo: "hephaestus-engine/hephaestus-demo"
-default_branch: main
+default_branch: r2p3-202611281244
 
 # The review rules are the reviewer's: every review prompt points at this
 # file, and only the files under rules/ are handed to every run, the build
